@@ -22,6 +22,7 @@
 
   const $ = (sel, el = document) => el.querySelector(sel);
   const mobile = window.matchMedia('(max-width: 760px)');
+  const canHover = window.matchMedia('(hover: hover)');
 
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const fmtKm = (km) => (km < 100 ? Math.round(km) : Math.round(km / 10) * 10).toLocaleString('zh-CN');
@@ -217,15 +218,18 @@
 
   /* ---------------- 地图 ---------------- */
 
+  // 手机上抽屉会盖住下半屏，地图需要能把北半球的内容推到屏幕上沿附近，
+  // 因此放开 maxBounds，并允许缩得更小
+  const MAX_BOUNDS = [[-62, -200], [85, 200]];
   const map = L.map('map', {
     zoomControl: false,
     attributionControl: false,
-    minZoom: 2,
+    minZoom: mobile.matches ? 1 : 2,
     maxZoom: 13,
     zoomSnap: 0.25,
     zoomDelta: 0.5,
     wheelPxPerZoomLevel: 110,
-    maxBounds: [[-62, -200], [85, 200]],
+    maxBounds: mobile.matches ? null : MAX_BOUNDS,
     maxBoundsViscosity: 0.85,
   });
 
@@ -317,8 +321,10 @@
       `<b>${esc(name)}</b><span>${trips.length > 4 ? `${names} 等 ${trips.length} 次旅行` : names}</span>`,
       { sticky: true, className: 'country-tip', direction: 'top', offset: [0, -10] }
     );
-    layer.on('mouseover', () => layer.setStyle(PALETTE.visitedHover));
-    layer.on('mouseout', () => layer.setStyle(PALETTE.visited));
+    if (canHover.matches) {
+      layer.on('mouseover', () => layer.setStyle(PALETTE.visitedHover));
+      layer.on('mouseout', () => layer.setStyle(PALETTE.visited));
+    }
     layer.on('click', () => {
       if (state.active && trips.includes(state.active)) return;
       if (trips.length === 1) {
@@ -359,7 +365,7 @@
   const pinGroup = L.layerGroup().addTo(map);
   const activeGroup = L.layerGroup().addTo(map);
 
-  const state = { active: null, token: 0, legLayers: [], markers: new Map() };
+  const state = { active: null, token: 0, legLayers: [], markers: new Map(), day: null, pushed: false };
   const previews = new Map();
   const pins = new Map();
 
@@ -409,7 +415,9 @@
       const r = ui.getBoundingClientRect();
       if (r.width) boxes.push([r.left, r.top, r.right, r.bottom]);
     });
-    const hit = (b) => boxes.some((o) => b[0] < o[2] && b[2] > o[0] && b[1] < o[3] && b[3] > o[1]);
+    const { x: W, y: H } = map.getSize();
+    const hit = (b) => b[0] < 4 || b[1] < 4 || b[2] > W - 4 || b[3] > H - 4
+      || boxes.some((o) => b[0] < o[2] && b[2] > o[0] && b[1] < o[3] && b[3] > o[1]);
     const gap = 14;
 
     visible
@@ -433,20 +441,132 @@
   map.on('zoomend moveend', layoutPinLabels);
   window.addEventListener('resize', layoutPinLabels);
 
+  /* ---------------- 移动端底部抽屉 ---------------- */
+
+  const panel = $('#panel');
+  const SHEET_ORDER = ['full', 'half', 'peek'];
+  const sheet = { state: 'half', drag: null };
+
+  // 各档位露出的高度
+  function sheetVisible(name = sheet.state) {
+    const h = panel.offsetHeight;
+    const safeBottom = parseFloat(getComputedStyle(panel).paddingBottom) || 0;
+    if (name === 'peek') return Math.min(h, 128 + safeBottom);
+    if (name === 'half') return Math.min(h, Math.round(window.innerHeight * 0.46));
+    return h;
+  }
+
+  const sheetOffset = (name) => panel.offsetHeight - sheetVisible(name);
+
+  function setSheet(name) {
+    if (!mobile.matches) return;
+    sheet.state = name;
+    panel.dataset.sheet = name;
+    panel.style.transform = '';
+    panel.style.setProperty('--sheet-y', `${sheetOffset(name)}px`);
+  }
+
+  panel.addEventListener('transitionend', (e) => {
+    if (e.target === panel && e.propertyName === 'transform') layoutPinLabels();
+  });
+
+  $('.sheet-handle').addEventListener('click', () => {
+    setSheet(sheet.state === 'peek' ? 'half' : sheet.state === 'half' ? 'full' : 'half');
+  });
+
+  // 手势归属：拖把手、非全屏时上滑、内容已滚到顶时下滑 → 拖动抽屉；其余交给内容滚动
+  panel.addEventListener('touchstart', (e) => {
+    if (!mobile.matches || e.touches.length !== 1) return;
+    const y = e.touches[0].clientY;
+    sheet.drag = {
+      y0: y,
+      last: y,
+      lastT: e.timeStamp,
+      v: 0,
+      base: sheetOffset(sheet.state),
+      onHandle: !!e.target.closest('.sheet-handle'),
+      view: $('.view.active'),
+      mode: null,
+    };
+  }, { passive: true });
+
+  panel.addEventListener('touchmove', (e) => {
+    const d = sheet.drag;
+    if (!d) return;
+    const y = e.touches[0].clientY;
+    const dy = y - d.y0;
+    if (!d.mode) {
+      if (Math.abs(dy) < 3) return;
+      const atTop = d.view.scrollTop <= 0;
+      d.mode = d.onHandle || (dy < 0 && sheet.state !== 'full') || (dy > 0 && atTop) ? 'sheet' : 'scroll';
+      if (d.mode === 'sheet') panel.classList.add('dragging');
+    }
+    if (d.mode !== 'sheet') return;
+    if (e.cancelable) e.preventDefault();
+
+    const max = sheetOffset('peek');
+    let pos = d.base + dy;
+    if (pos < 0) pos /= 4;
+    else if (pos > max) pos = max + (pos - max) / 4;
+    panel.style.transform = `translateY(${pos}px)`;
+
+    const dt = e.timeStamp - d.lastT;
+    if (dt > 0) d.v = 0.7 * ((y - d.last) / dt) + 0.3 * d.v;
+    d.last = y;
+    d.lastT = e.timeStamp;
+    d.pos = pos;
+  }, { passive: false });
+
+  function endDrag() {
+    const d = sheet.drag;
+    sheet.drag = null;
+    if (!d || d.mode !== 'sheet') return;
+    panel.classList.remove('dragging');
+    if (d.pos == null) {
+      setSheet(sheet.state);
+      return;
+    }
+    // 快速甩动时停在运动方向上的下一档，否则吸附到最近的档位
+    const snaps = SHEET_ORDER.map((s) => [s, sheetOffset(s)]);
+    let name;
+    if (Math.abs(d.v) > 0.4) {
+      const ahead = d.v > 0 ? snaps.find(([, y]) => y > d.pos + 1) : [...snaps].reverse().find(([, y]) => y < d.pos - 1);
+      name = (ahead || snaps[d.v > 0 ? snaps.length - 1 : 0])[0];
+    } else {
+      name = snaps.reduce((a, b) => (Math.abs(b[1] - d.pos) < Math.abs(a[1] - d.pos) ? b : a))[0];
+    }
+    setSheet(name);
+  }
+  panel.addEventListener('touchend', endDrag);
+  panel.addEventListener('touchcancel', endDrag);
+
+  // 地图聚焦到某处前，确保抽屉不会挡住它
+  function revealMap() {
+    if (mobile.matches && sheet.state === 'full') setSheet('half');
+  }
+
   /* ---------------- 视野控制（避开面板） ---------------- */
+
+  // 抽屉全屏时按半屏取景，收回后画面依然合适
+  const coveredHeight = () => Math.min(sheetVisible(), sheetVisible('half'));
 
   function fitPadding() {
     if (mobile.matches) {
-      const h = $('#panel').offsetHeight;
-      return { paddingTopLeft: [36, 70], paddingBottomRight: [36, h + 36] };
+      return { paddingTopLeft: [28, 72], paddingBottomRight: [28, coveredHeight() + 28] };
     }
-    const w = $('#panel').offsetWidth + 20;
+    const w = panel.offsetWidth + 20;
     return { paddingTopLeft: [w + 60, 70], paddingBottomRight: [90, 70] };
   }
 
   function focusOffset() {
-    if (mobile.matches) return L.point(0, $('#panel').offsetHeight / 2);
-    return L.point(-($('#panel').offsetWidth + 20) / 2, 0);
+    if (mobile.matches) return L.point(0, coveredHeight() / 2);
+    return L.point(-(panel.offsetWidth + 20) / 2, 0);
+  }
+
+  function popupPadding() {
+    return mobile.matches
+      ? { autoPanPaddingTopLeft: L.point(16, 72), autoPanPaddingBottomRight: L.point(16, coveredHeight() + 16) }
+      : { autoPanPaddingTopLeft: L.point(fitPadding().paddingTopLeft), autoPanPaddingBottomRight: null };
   }
 
   function flyToPoint(latlng, zoom) {
@@ -501,8 +621,11 @@
 
     ul.querySelectorAll('.trip-card').forEach((card) => {
       const id = card.dataset.id;
-      card.addEventListener('click', () => selectTrip(id));
-      card.addEventListener('mouseenter', () => hotTrip(id, true));
+      card.addEventListener('click', () => {
+        hotTrip(id, false);
+        selectTrip(id);
+      });
+      card.addEventListener('mouseenter', () => canHover.matches && hotTrip(id, true));
       card.addEventListener('mouseleave', () => hotTrip(id, false));
     });
   }
@@ -576,16 +699,22 @@
 
     el.querySelectorAll('.day').forEach((li) => {
       const no = Number(li.dataset.day);
-      li.addEventListener('mouseenter', () => highlightDay(no));
-      li.addEventListener('mouseleave', () => highlightDay(null));
+      li.addEventListener('mouseenter', () => canHover.matches && highlightDay(no));
+      li.addEventListener('mouseleave', () => canHover.matches && highlightDay(null));
       $('.day-head', li).addEventListener('click', () => {
         const day = trip.days[no - 1];
+        // 触屏没有悬停，点击某天即高亮该天，再点一次取消
+        if (!canHover.matches) highlightDay(state.day === no ? null : no);
+        revealMap();
         map.flyToBounds(L.latLngBounds(day.coords), { ...fitPadding(), maxZoom: TRIP_MAX_ZOOM + 1, duration: 0.9 });
       });
     });
 
     el.querySelectorAll('.stop').forEach((li) => {
-      li.addEventListener('click', () => focusPlace(li.dataset.name));
+      li.addEventListener('click', () => {
+        revealMap();
+        focusPlace(li.dataset.name);
+      });
     });
   }
 
@@ -608,7 +737,15 @@
 
     renderDetail(trip);
     showView('detail');
-    if (location.hash !== `#${id}`) history.replaceState(null, '', `#${id}`);
+    if (mobile.matches && sheet.state !== 'half') setSheet('half');
+    // 从列表进入详情时压一条历史记录，手机的返回手势就能回到列表
+    if (location.hash !== `#${id}`) {
+      if (location.hash) history.replaceState(null, '', `#${id}`);
+      else {
+        history.pushState({ trip: id }, '', `#${id}`);
+        state.pushed = true;
+      }
+    }
 
     let drawn = false;
     const draw = () => {
@@ -625,6 +762,7 @@
     activeGroup.clearLayers();
     state.legLayers = [];
     state.markers.clear();
+    state.day = null;
   }
 
   function backToList(fly = true) {
@@ -637,7 +775,11 @@
       if (el) el.style.display = '';
     });
     showView('list');
-    history.replaceState(null, '', location.pathname + location.search);
+    if (location.hash) {
+      if (state.pushed) history.back();
+      else history.replaceState(null, '', location.pathname + location.search);
+    }
+    state.pushed = false;
     map.closePopup();
     if (fly) showAll();
     else layoutPinLabels();
@@ -736,21 +878,26 @@
         offset: [size / 2 + 3, 0],
         className: `lbl lbl-${p.t}`,
       });
+      // 抽屉高度会变，弹窗的避让边距要在打开前刷新；该监听需早于 bindPopup 注册
+      marker.on('click', () => L.setOptions(marker.getPopup(), popupPadding()));
       marker.bindPopup(
         `<div class="pp-type" style="color:${color}">${TYPE_LABEL[p.t]} · ${p.days.map((d) => `第 ${d} 天`).join('、')}</div>
          <div class="pp-name">${esc(p.n)}</div>
          ${p.alt ? `<div class="pp-alt">海拔 ${p.alt} m</div>` : ''}
          ${p.d ? `<p class="pp-note">${esc(p.d)}</p>` : ''}`,
-        { className: 'stop-popup', closeButton: true, autoPanPaddingTopLeft: L.point(fitPadding().paddingTopLeft) }
+        { className: 'stop-popup', closeButton: true, ...popupPadding() }
       );
-      marker.on('mouseover', () => toggleLabel(marker, true));
-      marker.on('mouseout', () => toggleLabel(marker, false));
+      if (canHover.matches) {
+        marker.on('mouseover', () => toggleLabel(marker, true));
+        marker.on('mouseout', () => toggleLabel(marker, false));
+      }
       marker.on('click', () => scrollToDay(p.days[0]));
 
       state.markers.set(p.n, { marker, place: p });
     });
 
     updateZoomClass();
+    if (state.day != null) highlightDay(state.day);
   }
 
   function toggleLabel(marker, on) {
@@ -760,6 +907,8 @@
   }
 
   function highlightDay(no) {
+    state.day = no;
+    document.querySelectorAll('#view-detail .day').forEach((li) => li.classList.toggle('on', Number(li.dataset.day) === no));
     state.legLayers.forEach(({ day, layers }) => {
       const on = no == null || day === no;
       layers.forEach(({ layer, opacity }) => layer.setStyle({ opacity: on ? opacity : opacity * 0.15 }));
@@ -781,6 +930,7 @@
     if (!entry) return;
     const zoom = Math.max(map.getZoom(), 9.5);
     map.closePopup();
+    L.setOptions(entry.marker.getPopup(), popupPadding());
     map.once('moveend', () => entry.marker.openPopup());
     flyToPoint(entry.marker.getLatLng(), zoom);
   }
@@ -795,18 +945,51 @@
   $('#zoom-in').addEventListener('click', () => map.zoomIn());
   $('#zoom-out').addEventListener('click', () => map.zoomOut());
   $('#zoom-all').addEventListener('click', () => {
-    if (state.active) map.flyToBounds(state.active.bounds, { ...fitPadding(), maxZoom: TRIP_MAX_ZOOM, duration: 1 });
-    else showAll();
+    revealMap();
+    if (state.active) {
+      highlightDay(null);
+      map.flyToBounds(state.active.bounds, { ...fitPadding(), maxZoom: TRIP_MAX_ZOOM, duration: 1 });
+    } else showAll();
   });
+
+  const legend = $('.legend');
+  const toggleLegend = (on) => {
+    legend.classList.toggle('open', on);
+    $('#legend-toggle').classList.toggle('on', on);
+    layoutPinLabels();
+  };
+  $('#legend-toggle').addEventListener('click', () => toggleLegend(!legend.classList.contains('open')));
+  legend.addEventListener('click', () => toggleLegend(false));
+  map.on('dragstart', () => legend.classList.contains('open') && toggleLegend(false));
 
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && state.active) backToList();
   });
 
-  window.addEventListener('hashchange', () => {
+  // 覆盖返回手势、浏览器前进后退、手动改 hash 等情况
+  window.addEventListener('popstate', () => {
     const id = location.hash.slice(1);
     if (id && TRIPS.some((t) => t.id === id)) selectTrip(id);
+    else if (!id && state.active) backToList();
   });
+
+  function applyLayoutMode() {
+    map.setMinZoom(mobile.matches ? 1 : 2);
+    map.setMaxBounds(mobile.matches ? null : MAX_BOUNDS);
+    if (mobile.matches) setSheet(sheet.state);
+    else {
+      panel.style.transform = '';
+      panel.style.removeProperty('--sheet-y');
+      toggleLegend(false);
+    }
+  }
+  mobile.addEventListener('change', applyLayoutMode);
+  // 横竖屏切换、地址栏伸缩都会改变视口高度，档位需按新高度重算
+  window.addEventListener('resize', () => mobile.matches && !sheet.drag && setSheet(sheet.state));
+
+  panel.classList.add('dragging');
+  if (mobile.matches) setSheet('half');
+  requestAnimationFrame(() => requestAnimationFrame(() => panel.classList.remove('dragging')));
 
   renderOverview();
   renderList();
