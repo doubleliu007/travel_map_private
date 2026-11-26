@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>行迹 · 旅行地图</title>
+  <link rel="stylesheet" href="vendor/leaflet.css">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="map"></div>
+  <div class="vignette"></div>
+
+  <aside id="panel">
+    <section id="view-list" class="view active">
+      <header class="brand">
+        <div class="eyebrow">TRAVEL ATLAS</div>
+        <h1>行迹</h1>
+        <p class="tagline">把走过的路，留在地图上。</p>
+      </header>
+      <div id="overview" class="stats"></div>
+      <div class="section-title">
+        <span>旅行记录</span>
+        <span class="hint">点击查看路线</span>
+      </div>
+      <ul id="trip-list" class="trip-list"></ul>
+    </section>
+
+    <section id="view-detail" class="view"></section>
+  </aside>
+
+  <div class="map-controls">
+    <button type="button" id="zoom-in" title="放大">+</button>
+    <button type="button" id="zoom-out" title="缩小">−</button>
+    <button type="button" id="zoom-all" title="查看全部旅行">
+      <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.8 3 2.8 15 0 18M12 3c-2.8 3-2.8 15 0 18"/></svg>
+    </button>
+  </div>
+
+  <div class="legend">
+    <div class="legend-row"><i class="lg lg-city"></i>住宿城市</div>
+    <div class="legend-row"><i class="lg lg-sight"></i>到访景点</div>
+    <div class="legend-row"><i class="lg lg-pass"></i>途经</div>
+    <div class="legend-sep"></div>
+    <div class="legend-row"><i class="lg-line"></i>公路</div>
+    <div class="legend-row"><i class="lg-line lg-rail"></i>铁路</div>
+    <div class="legend-row"><i class="lg-line lg-dash"></i>轮渡 / 步行</div>
+    <div class="legend-row"><i class="lg-line lg-dot"></i>航班</div>
+  </div>
+
+  <script src="vendor/leaflet.js"></script>
+  <script src="vendor/topojson-client.min.js"></script>
+  <script src="data/world.js"></script>
+  <script src="data/trips.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
