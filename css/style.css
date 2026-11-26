@@ -93,6 +93,26 @@ button { font: inherit; color: inherit; }
   backdrop-filter: blur(6px);
   transition: border-color 0.25s, background 0.25s;
 }
+.trip-pin.label-left .pin-label {
+  left: auto;
+  right: 14px;
+}
+.trip-pin.label-top .pin-label {
+  left: 0;
+  top: -14px;
+  transform: translate(-50%, -100%);
+}
+.trip-pin.label-bottom .pin-label {
+  left: 0;
+  top: 14px;
+  transform: translate(-50%, 0);
+}
+.trip-pin.label-off .pin-label {
+  opacity: 0;
+  pointer-events: none;
+}
+.trip-pin.label-off:hover .pin-label,
+.trip-pin.label-off.hot .pin-label { opacity: 1; }
 .trip-pin .pin-label small {
   margin-left: 6px;
   font-family: var(--sans);
@@ -261,7 +281,8 @@ button { font: inherit; color: inherit; }
 
 .stats {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
   margin: 26px 0 8px;
   padding: 16px 4px;
   border-top: 1px solid var(--line);
@@ -291,6 +312,14 @@ button { font: inherit; color: inherit; }
 .section-title .hint { font-family: var(--sans); font-size: 11.5px; color: var(--dim); letter-spacing: 0.04em; }
 
 .trip-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.year-head {
+  margin: 8px 0 -2px;
+  font-family: var(--serif);
+  font-size: 13px;
+  letter-spacing: 0.16em;
+  color: var(--gold);
+}
+.year-head:first-child { margin-top: 0; }
 
 .trip-card {
   display: grid;

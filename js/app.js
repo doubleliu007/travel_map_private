@@ -4,9 +4,11 @@
   const TRIPS = window.TRIPS;
   const COUNTRY_NAMES = window.COUNTRY_NAMES || {};
 
-  const MODE_LABEL = { car: '公路', bus: '巴士', train: '铁路', shinkansen: '新干线', ferry: '轮渡', flight: '航班', walk: '步行' };
+  const MODE_LABEL = { car: '公路', bus: '巴士', train: '铁路', shinkansen: '新干线', ferry: '轮渡', flight: '航班', walk: '步行', cable: '缆车' };
   // 折线是道路的简化，乘以系数估算实际里程
-  const ROUTE_FACTOR = { car: 1.18, bus: 1.18, walk: 1.2, train: 1.08, shinkansen: 1.05, ferry: 1, flight: 1 };
+  const ROUTE_FACTOR = { car: 1.18, bus: 1.18, walk: 1.2, train: 1.08, shinkansen: 1.05, ferry: 1, flight: 1, cable: 1 };
+  const DASHED_MODES = new Set(['ferry', 'walk', 'cable']);
+  const TRIP_MAX_ZOOM = 12;
   const TYPE_LABEL = { city: '住宿', sight: '到访', pass: '途经' };
   const TYPE_RANK = { city: 3, sight: 2, pass: 1 };
 
@@ -14,13 +16,15 @@
     land: { fillColor: '#173328', fillOpacity: 1, color: '#25483a', weight: 0.6 },
     visited: { fillColor: '#245442', fillOpacity: 1, color: '#6aa888', weight: 0.9 },
     visitedHover: { fillColor: '#2d6852', color: '#9fd6b8', weight: 1.2 },
+    province: { fill: false, color: '#2a5141', weight: 0.5 },
   };
+  const CHINA = '156';
 
   const $ = (sel, el = document) => el.querySelector(sel);
   const mobile = window.matchMedia('(max-width: 760px)');
 
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const fmtKm = (km) => (Math.round(km / 10) * 10).toLocaleString('zh-CN');
+  const fmtKm = (km) => (km < 100 ? Math.round(km) : Math.round(km / 10) * 10).toLocaleString('zh-CN');
 
   /* ---------------- 地理工具 ---------------- */
 
@@ -31,6 +35,61 @@
     const dLng = (b[1] - a[1]) * r;
     const s = Math.sin(dLat / 2) ** 2 + Math.cos(a[0] * r) * Math.cos(b[0] * r) * Math.sin(dLng / 2) ** 2;
     return 2 * R * Math.asin(Math.sqrt(s));
+  }
+
+  const geometryRings = (g) => (g.type === 'Polygon' ? [g.coordinates] : g.coordinates).flat();
+
+  function inRing([lat, lng], ring) {
+    let inside = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [x1, y1] = ring[i];
+      const [x2, y2] = ring[j];
+      if (y1 > lat !== y2 > lat && lng < ((x2 - x1) * (lat - y1)) / (y2 - y1) + x1) inside = !inside;
+    }
+    return inside;
+  }
+
+  // 奇偶规则：落在外环内、洞内各算一次，洞自然被排除
+  const inGeometry = (pt, g) => geometryRings(g).reduce((n, ring) => n + inRing(pt, ring), 0) % 2 === 1;
+
+  // 向心 Catmull-Rom 样条：曲线经过每个途经点，且急转弯处不会打圈
+  function smooth(pts, samples = 8) {
+    const P = pts.filter((p, i) => !i || p[0] !== pts[i - 1][0] || p[1] !== pts[i - 1][1]);
+    if (P.length < 3) return P;
+    const k = Math.cos((P[0][0] * Math.PI) / 180);
+    const xy = P.map(([lat, lng]) => [lng * k, lat]);
+    const n = xy.length;
+    const ext = [
+      [2 * xy[0][0] - xy[1][0], 2 * xy[0][1] - xy[1][1]],
+      ...xy,
+      [2 * xy[n - 1][0] - xy[n - 2][0], 2 * xy[n - 1][1] - xy[n - 2][1]],
+    ];
+    const knot = (a, b) => Math.max(Math.hypot(b[0] - a[0], b[1] - a[1]) ** 0.5, 1e-9);
+    const lerp = (a, b, ta, tb, t) => {
+      const u = (t - ta) / (tb - ta);
+      return [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u];
+    };
+
+    const out = [];
+    for (let i = 1; i < n; i++) {
+      const [p0, p1, p2, p3] = [ext[i - 1], ext[i], ext[i + 1], ext[i + 2]];
+      const t0 = 0;
+      const t1 = t0 + knot(p0, p1);
+      const t2 = t1 + knot(p1, p2);
+      const t3 = t2 + knot(p2, p3);
+      for (let j = 0; j < samples; j++) {
+        const t = t1 + ((t2 - t1) * j) / samples;
+        const a1 = lerp(p0, p1, t0, t1, t);
+        const a2 = lerp(p1, p2, t1, t2, t);
+        const a3 = lerp(p2, p3, t2, t3, t);
+        const b1 = lerp(a1, a2, t0, t2, t);
+        const b2 = lerp(a2, a3, t1, t3, t);
+        const [x, y] = lerp(b1, b2, t1, t2, t);
+        out.push([y, x / k]);
+      }
+    }
+    out.push(P[n - 1]);
+    return out;
   }
 
   function arc(a, b, n = 64) {
@@ -91,7 +150,7 @@
           }
         });
 
-        leg.line = leg.mode === 'flight' ? arc(pts[0], pts[pts.length - 1]) : pts;
+        leg.line = leg.mode === 'flight' ? arc(pts[0], pts[pts.length - 1]) : smooth(pts);
         let km = 0;
         for (let i = 1; i < pts.length; i++) km += haversine(pts[i - 1], pts[i]);
         leg.km = km * (ROUTE_FACTOR[leg.mode] || 1.1);
@@ -141,7 +200,7 @@
     trip.days.forEach((day, di) => {
       day.legs.forEach((leg) => {
         const d = leg.line.map((c, i) => (i ? 'L' : 'M') + toSvg(c).map((v) => v.toFixed(1)).join(' ')).join('');
-        const dash = leg.mode === 'flight' ? ' stroke-dasharray="1.5 4"' : leg.mode === 'ferry' || leg.mode === 'walk' ? ' stroke-dasharray="3 3"' : '';
+        const dash = leg.mode === 'flight' ? ' stroke-dasharray="1.5 4"' : DASHED_MODES.has(leg.mode) ? ' stroke-dasharray="3 3"' : '';
         paths += `<path d="${d}" fill="none" stroke="${trip.dayColors[di]}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"${dash}/>`;
       });
     });
@@ -180,10 +239,67 @@
   for (let lng = -180; lng <= 180; lng += 20) graticule.push([[-62, lng], [85, lng]]);
   L.polyline(graticule, { renderer: canvas, color: '#8fd4ae', opacity: 0.05, weight: 1, interactive: false }).addTo(map);
 
+  // 跨越 180° 经线的环（俄罗斯、斐济）在平面投影下会被拉成横贯全图的条带，
+  // 需展开经度使其连续；绕极一周无法闭合的环（南极洲）在可视范围外，直接舍弃
+  function unwrapRing(ring) {
+    let shift = 0;
+    let prev = null;
+    const out = ring.map(([lng, lat]) => {
+      if (prev !== null) {
+        const d = lng + shift - prev;
+        if (d > 180) shift -= 360;
+        else if (d < -180) shift += 360;
+      }
+      prev = lng + shift;
+      return [prev, lat];
+    });
+    return shift === 0 ? out : null;
+  }
+
+  function fixAntimeridian(fc) {
+    fc.features.forEach((f) => {
+      const g = f.geometry;
+      if (!g || (g.type !== 'Polygon' && g.type !== 'MultiPolygon')) return;
+      const polys = g.type === 'Polygon' ? [g.coordinates] : g.coordinates;
+      g.type = 'MultiPolygon';
+      g.coordinates = polys
+        .map((rings) => rings.map(unwrapRing))
+        .filter((rings) => rings[0])
+        .map((rings) => rings.filter(Boolean));
+    });
+    return fc;
+  }
+
   const topo = window.WORLD_TOPO;
-  const land = topojson.feature(topo, topo.objects.land);
-  const countries = topojson.feature(topo, topo.objects.countries);
+  const land = fixAntimeridian(topojson.feature(topo, topo.objects.land));
+  const countries = fixAntimeridian(topojson.feature(topo, topo.objects.countries));
   countries.features = countries.features.filter((f) => f.id !== '010');
+
+  // 国内按省份高亮：中国整体按未到访绘制，到访过的省份叠加在上面
+  const provinces = window.CHINA_TOPO ? topojson.feature(window.CHINA_TOPO, window.CHINA_TOPO.objects.provinces) : null;
+  const byProvince = provinces && ((f) => f.id === CHINA);
+
+  // 简化后的海岸线与省界略有出入，海岛、海边的点可能落在缝隙里，按最近的省份归属
+  function provinceOf(pt) {
+    const hit = provinces.features.find((f) => inGeometry(pt, f.geometry));
+    if (hit) return hit.id;
+    let best = null;
+    let min = Infinity;
+    provinces.features.forEach((f) => {
+      geometryRings(f.geometry).forEach((ring) => ring.forEach(([lng, lat]) => {
+        const d = (lat - pt[0]) ** 2 + ((lng - pt[1]) * Math.cos((pt[0] * Math.PI) / 180)) ** 2;
+        if (d < min) [min, best] = [d, f.id];
+      }));
+    });
+    return best;
+  }
+
+  TRIPS.forEach((trip) => {
+    trip.provinces = provinces && trip.countries.includes(CHINA)
+      ? [...new Set([...trip.places.values()].filter((p) => p.t !== 'pass').map((p) => provinceOf(p.c)))]
+      : [];
+  });
+  const visitedProvinces = new Set(TRIPS.flatMap((t) => t.provinces));
 
   // 海岸光晕
   L.geoJSON(land, { renderer: canvas, interactive: false, style: { color: '#8fd4ae', weight: 7, opacity: 0.045, fill: false } }).addTo(map);
@@ -191,26 +307,52 @@
   L.geoJSON(countries, {
     renderer: canvas,
     interactive: false,
-    filter: (f) => !visitedCountries.has(f.id),
+    filter: (f) => !visitedCountries.has(f.id) || (byProvince && byProvince(f)),
     style: PALETTE.land,
   }).addTo(map);
 
+  function bindRegion(layer, name, trips) {
+    const names = trips.slice(0, 4).map((t) => esc(t.title)).join('、');
+    layer.bindTooltip(
+      `<b>${esc(name)}</b><span>${trips.length > 4 ? `${names} 等 ${trips.length} 次旅行` : names}</span>`,
+      { sticky: true, className: 'country-tip', direction: 'top', offset: [0, -10] }
+    );
+    layer.on('mouseover', () => layer.setStyle(PALETTE.visitedHover));
+    layer.on('mouseout', () => layer.setStyle(PALETTE.visited));
+    layer.on('click', () => {
+      if (state.active && trips.includes(state.active)) return;
+      if (trips.length === 1) {
+        selectTrip(trips[0].id);
+        return;
+      }
+      if (state.active) backToList(false);
+      const bounds = trips.reduce((b, t) => b.extend(t.bounds), L.latLngBounds(trips[0].coords));
+      map.flyToBounds(bounds, { ...fitPadding(), maxZoom: 7, duration: 1 });
+    });
+  }
+
+  if (provinces) {
+    L.geoJSON(provinces, {
+      renderer: canvas,
+      interactive: false,
+      filter: (f) => !visitedProvinces.has(f.id),
+      style: PALETTE.province,
+    }).addTo(map);
+
+    L.geoJSON(provinces, {
+      renderer: canvas,
+      filter: (f) => visitedProvinces.has(f.id),
+      style: PALETTE.visited,
+      onEachFeature: (f, layer) => bindRegion(layer, f.properties.name, TRIPS.filter((t) => t.provinces.includes(f.id))),
+    }).addTo(map);
+  }
+
   L.geoJSON(countries, {
     renderer: canvas,
-    filter: (f) => visitedCountries.has(f.id),
+    filter: (f) => visitedCountries.has(f.id) && !(byProvince && byProvince(f)),
     style: PALETTE.visited,
-    onEachFeature(f, layer) {
-      const trips = TRIPS.filter((t) => t.countries.includes(f.id));
-      layer.bindTooltip(
-        `<b>${esc(COUNTRY_NAMES[f.id] || f.properties.name)}</b><span>${trips.map((t) => esc(t.title)).join('、')}</span>`,
-        { sticky: true, className: 'country-tip', direction: 'top', offset: [0, -10] }
-      );
-      layer.on('mouseover', () => layer.setStyle(PALETTE.visitedHover));
-      layer.on('mouseout', () => layer.setStyle(PALETTE.visited));
-      layer.on('click', () => {
-        if (!state.active || !trips.includes(state.active)) selectTrip(trips[0].id);
-      });
-    },
+    onEachFeature: (f, layer) =>
+      bindRegion(layer, COUNTRY_NAMES[f.id] || f.properties.name, TRIPS.filter((t) => t.countries.includes(f.id))),
   }).addTo(map);
 
   const previewGroup = L.layerGroup().addTo(map);
@@ -255,6 +397,42 @@
   }
   map.on('zoomend', updateZoomClass);
 
+  // 旅行标签避让：长行程优先，依次尝试右、左、上、下，都放不下则隐藏（悬停时再显示）
+  const LABEL_SIDES = ['right', 'left', 'top', 'bottom'];
+
+  function layoutPinLabels() {
+    const visible = TRIPS.map((trip) => ({ trip, el: pins.get(trip.id).getElement() }))
+      .filter(({ el }) => el && el.style.display !== 'none')
+      .map((item) => ({ ...item, p: map.latLngToContainerPoint(item.trip.anchor) }));
+    const boxes = visible.map(({ p }) => [p.x - 9, p.y - 9, p.x + 9, p.y + 9]);
+    document.querySelectorAll('#panel, .legend, .map-controls').forEach((ui) => {
+      const r = ui.getBoundingClientRect();
+      if (r.width) boxes.push([r.left, r.top, r.right, r.bottom]);
+    });
+    const hit = (b) => boxes.some((o) => b[0] < o[2] && b[2] > o[0] && b[1] < o[3] && b[3] > o[1]);
+    const gap = 14;
+
+    visible
+      .sort((a, b) => b.trip.days.length - a.trip.days.length)
+      .forEach(({ el, p }) => {
+        const label = el.querySelector('.pin-label');
+        const w = label.offsetWidth;
+        const h = label.offsetHeight;
+        const cand = {
+          right: [p.x + gap, p.y - h / 2, p.x + gap + w, p.y + h / 2],
+          left: [p.x - gap - w, p.y - h / 2, p.x - gap, p.y + h / 2],
+          top: [p.x - w / 2, p.y - gap - h, p.x + w / 2, p.y - gap],
+          bottom: [p.x - w / 2, p.y + gap, p.x + w / 2, p.y + gap + h],
+        };
+        const side = LABEL_SIDES.find((s) => !hit(cand[s]));
+        LABEL_SIDES.forEach((s) => el.classList.toggle(`label-${s}`, s === side && s !== 'right'));
+        el.classList.toggle('label-off', !side);
+        if (side) boxes.push(cand[side]);
+      });
+  }
+  map.on('zoomend moveend', layoutPinLabels);
+  window.addEventListener('resize', layoutPinLabels);
+
   /* ---------------- 视野控制（避开面板） ---------------- */
 
   function fitPadding() {
@@ -292,7 +470,8 @@
     const km = TRIPS.reduce((s, t) => s + t.km, 0);
     $('#overview').innerHTML = [
       [TRIPS.length, '次旅行'],
-      [visitedCountries.size, '个国家'],
+      [visitedCountries.size, '国家/地区'],
+      ...(provinces ? [[visitedProvinces.size, '国内省份']] : []),
       [days, '天在路上'],
       [`${(km / 1000).toFixed(1)}<small>k</small>`, '公里'],
     ].map(([v, l]) => `<div class="stat"><b>${v}</b><span>${l}</span></div>`).join('');
@@ -300,7 +479,11 @@
 
   function renderList() {
     const ul = $('#trip-list');
-    ul.innerHTML = TRIPS.map((t) => `
+    let year = '';
+    ul.innerHTML = TRIPS.map((t) => {
+      const y = t.date.slice(0, 4);
+      const head = y !== year ? `<li class="year-head">${(year = y)}</li>` : '';
+      return `${head}
       <li class="trip-card" data-id="${t.id}">
         <div class="mini">${miniRoute(t)}</div>
         <div class="info">
@@ -309,11 +492,12 @@
           <div class="sub">${esc(t.subtitle)}</div>
           <div class="meta">
             <span class="chip">${t.days.length} 天</span>
-            <span class="chip">约 ${fmtKm(t.km)} km</span>
+            ${t.km >= 1 ? `<span class="chip">约 ${fmtKm(t.km)} km</span>` : ''}
             <span class="chip">${esc(t.date)}</span>
           </div>
         </div>
-      </li>`).join('');
+      </li>`;
+    }).join('');
 
     ul.querySelectorAll('.trip-card').forEach((card) => {
       const id = card.dataset.id;
@@ -351,16 +535,16 @@
       </div>
       <div class="stats">
         <div class="stat"><b>${trip.days.length}<small>天</small></b><span>行程</span></div>
-        <div class="stat"><b>${fmtKm(trip.km)}</b><span>公里（约）</span></div>
+        <div class="stat"><b>${trip.km >= 1 ? fmtKm(trip.km) : '—'}</b><span>公里（约）</span></div>
         <div class="stat"><b>${trip.count.sight}</b><span>到访</span></div>
         <div class="stat"><b>${trip.count.pass}</b><span>途经</span></div>
       </div>
       <p class="summary">${esc(trip.summary)}</p>
       <div class="tags">${trip.tags.map((t) => `<span class="chip">${esc(t)}</span>`).join('')}</div>
-      <div class="chain">
+      ${trip.chain.length ? `<div class="chain">
         <span class="label">住宿路线</span>
         ${trip.chain.map((c) => `<b>${esc(c)}</b>`).join('<span class="arr">→</span>')}
-      </div>
+      </div>` : ''}
       <ol class="timeline">
         ${trip.days.map((day, di) => `
           <li class="day" data-day="${day.no}" style="--dc:${trip.dayColors[di]}">
@@ -369,7 +553,7 @@
               <h4>${esc(day.title)}</h4>
               <div class="day-meta">
                 <span>${day.modes.map(esc).join(' + ')}</span>
-                <span>约 ${fmtKm(day.km)} km</span>
+                ${day.km >= 1 ? `<span>约 ${fmtKm(day.km)} km</span>` : ''}
                 ${day.stay ? `<span class="stay">宿 · ${esc(day.stay)}</span>` : ''}
               </div>
             </div>
@@ -385,10 +569,10 @@
             </ul>
           </li>`).join('')}
       </ol>
-      <div class="detail-foot">路线为示意，里程按折线估算</div>`;
+      <div class="detail-foot">路线为示意，里程按折线估算 · 边界数据 Natural Earth、DataV.GeoAtlas</div>`;
 
     el.scrollTop = 0;
-    $('.back', el).addEventListener('click', backToList);
+    $('.back', el).addEventListener('click', () => backToList());
 
     el.querySelectorAll('.day').forEach((li) => {
       const no = Number(li.dataset.day);
@@ -396,7 +580,7 @@
       li.addEventListener('mouseleave', () => highlightDay(null));
       $('.day-head', li).addEventListener('click', () => {
         const day = trip.days[no - 1];
-        map.flyToBounds(L.latLngBounds(day.coords), { ...fitPadding(), maxZoom: 10, duration: 0.9 });
+        map.flyToBounds(L.latLngBounds(day.coords), { ...fitPadding(), maxZoom: TRIP_MAX_ZOOM + 1, duration: 0.9 });
       });
     });
 
@@ -434,7 +618,7 @@
     };
     map.once('moveend', draw);
     setTimeout(draw, 1700);
-    map.flyToBounds(trip.bounds, { ...fitPadding(), maxZoom: 9, duration: 1.2 });
+    map.flyToBounds(trip.bounds, { ...fitPadding(), maxZoom: TRIP_MAX_ZOOM, duration: 1.2 });
   }
 
   function clearActive() {
@@ -443,7 +627,7 @@
     state.markers.clear();
   }
 
-  function backToList() {
+  function backToList(fly = true) {
     state.token++;
     state.active = null;
     clearActive();
@@ -455,7 +639,8 @@
     showView('list');
     history.replaceState(null, '', location.pathname + location.search);
     map.closePopup();
-    showAll();
+    if (fly) showAll();
+    else layoutPinLabels();
   }
 
   function drawIn(layer, delay, dur) {
@@ -494,7 +679,7 @@
       const color = trip.dayColors[di];
       day.legs.forEach((leg) => {
         const dur = Math.max(260, (leg.km / totalKm) * total);
-        const dashed = leg.mode === 'flight' ? '1 9' : leg.mode === 'ferry' || leg.mode === 'walk' ? '6 7' : null;
+        const dashed = leg.mode === 'flight' ? '1 9' : DASHED_MODES.has(leg.mode) ? '6 7' : null;
 
         const glow = L.polyline(leg.line, {
           pane: 'routes', color, weight: 11, opacity: 0.1, lineCap: 'round', lineJoin: 'round', interactive: false,
@@ -610,7 +795,7 @@
   $('#zoom-in').addEventListener('click', () => map.zoomIn());
   $('#zoom-out').addEventListener('click', () => map.zoomOut());
   $('#zoom-all').addEventListener('click', () => {
-    if (state.active) map.flyToBounds(state.active.bounds, { ...fitPadding(), maxZoom: 9, duration: 1 });
+    if (state.active) map.flyToBounds(state.active.bounds, { ...fitPadding(), maxZoom: TRIP_MAX_ZOOM, duration: 1 });
     else showAll();
   });
 
@@ -627,6 +812,7 @@
   renderList();
   showAll(false);
   updateZoomClass();
+  layoutPinLabels();
 
   const initial = location.hash.slice(1);
   if (initial && TRIPS.some((t) => t.id === initial)) setTimeout(() => selectTrip(initial), 300);
