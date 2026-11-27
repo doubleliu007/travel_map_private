@@ -56,38 +56,41 @@ button { font: inherit; color: inherit; }
 }
 
 /* 旅行标记 */
-.trip-pin { position: relative; }
+.trip-pin {
+  position: relative;
+  --pin: 9px;
+  --pin-gap: 10px;
+  --pin-hit: -8px;
+}
 .trip-pin .dot,
 .trip-pin .pulse {
   position: absolute;
   left: 0;
   top: 0;
+  width: var(--pin);
+  height: var(--pin);
   border-radius: 50%;
   transform: translate(-50%, -50%);
 }
 .trip-pin .dot::after {
   content: "";
   position: absolute;
-  inset: -12px;
+  inset: var(--pin-hit);
   border-radius: 50%;
 }
 .trip-pin .dot {
-  width: 13px;
-  height: 13px;
   background: var(--gold);
-  border: 2.5px solid #0b1d17;
-  box-shadow: 0 0 0 1.5px var(--gold), 0 0 18px rgba(216, 195, 139, 0.7);
+  border: 1.5px solid #0b1d17;
+  box-shadow: 0 0 0 1px var(--gold), 0 0 8px rgba(216, 195, 139, 0.55);
   transition: transform 0.25s ease;
 }
 .trip-pin .pulse {
-  width: 13px;
-  height: 13px;
-  border: 1.5px solid var(--gold);
-  animation: pulse 2.6s ease-out infinite;
+  border: 1px solid var(--gold);
+  animation: pulse 2.8s ease-out infinite;
 }
 .trip-pin .pin-label {
   position: absolute;
-  left: 14px;
+  left: var(--pin-gap);
   top: 0;
   transform: translateY(-50%);
   white-space: nowrap;
@@ -104,16 +107,16 @@ button { font: inherit; color: inherit; }
 }
 .trip-pin.label-left .pin-label {
   left: auto;
-  right: 14px;
+  right: var(--pin-gap);
 }
 .trip-pin.label-top .pin-label {
   left: 0;
-  top: -14px;
+  top: calc(-1 * var(--pin-gap));
   transform: translate(-50%, -100%);
 }
 .trip-pin.label-bottom .pin-label {
   left: 0;
-  top: 14px;
+  top: var(--pin-gap);
   transform: translate(-50%, 0);
 }
 .trip-pin.label-off .pin-label {
@@ -130,13 +133,13 @@ button { font: inherit; color: inherit; }
   font-size: 11px;
   color: var(--muted);
 }
-.trip-pin.hot .dot { transform: translate(-50%, -50%) scale(1.35); }
+.trip-pin.hot .dot { transform: translate(-50%, -50%) scale(1.5); }
 .trip-pin.hot .pin-label {
   border-color: var(--gold);
   background: rgba(20, 44, 35, 0.92);
 }
 @media (hover: hover) {
-  .trip-pin:hover .dot { transform: translate(-50%, -50%) scale(1.35); }
+  .trip-pin:hover .dot { transform: translate(-50%, -50%) scale(1.5); }
   .trip-pin:hover .pin-label {
     border-color: var(--gold);
     background: rgba(20, 44, 35, 0.92);
@@ -144,8 +147,8 @@ button { font: inherit; color: inherit; }
 }
 
 @keyframes pulse {
-  0% { width: 13px; height: 13px; opacity: 0.9; }
-  100% { width: 54px; height: 54px; opacity: 0; }
+  0% { transform: translate(-50%, -50%) scale(1); opacity: 0.7; }
+  100% { transform: translate(-50%, -50%) scale(2.6); opacity: 0; }
 }
 
 /* 地点标记 */
@@ -638,6 +641,10 @@ button { font: inherit; color: inherit; }
     touch-action: pan-y;
   }
   #panel.dragging { transition: none; }
+
+  .trip-pin { --pin: 8px; --pin-gap: 9px; --pin-hit: -10px; }
+  .trip-pin .pin-label { padding: 3px 8px 3px 7px; font-size: 12px; }
+  .trip-pin .pin-label small { margin-left: 4px; font-size: 10px; }
 
   .sheet-handle {
     display: block;

@@ -410,7 +410,7 @@
     const visible = TRIPS.map((trip) => ({ trip, el: pins.get(trip.id).getElement() }))
       .filter(({ el }) => el && el.style.display !== 'none')
       .map((item) => ({ ...item, p: map.latLngToContainerPoint(item.trip.anchor) }));
-    const boxes = visible.map(({ p }) => [p.x - 9, p.y - 9, p.x + 9, p.y + 9]);
+    const boxes = visible.map(({ p }) => [p.x - 6, p.y - 6, p.x + 6, p.y + 6]);
     document.querySelectorAll('#panel, .legend, .map-controls').forEach((ui) => {
       const r = ui.getBoundingClientRect();
       if (r.width) boxes.push([r.left, r.top, r.right, r.bottom]);
@@ -418,7 +418,7 @@
     const { x: W, y: H } = map.getSize();
     const hit = (b) => b[0] < 4 || b[1] < 4 || b[2] > W - 4 || b[3] > H - 4
       || boxes.some((o) => b[0] < o[2] && b[2] > o[0] && b[1] < o[3] && b[3] > o[1]);
-    const gap = 14;
+    const gap = mobile.matches ? 9 : 10;
 
     visible
       .sort((a, b) => b.trip.days.length - a.trip.days.length)
