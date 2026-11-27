@@ -16,6 +16,8 @@
     land: { fillColor: '#173328', fillOpacity: 1, color: '#25483a', weight: 0.6 },
     visited: { fillColor: '#245442', fillOpacity: 1, color: '#6aa888', weight: 0.9 },
     visitedHover: { fillColor: '#2d6852', color: '#9fd6b8', weight: 1.2 },
+    // 查看单次旅行时压低到访区域的填色，让彩色路线更突出
+    visitedQuiet: { fillColor: '#1c4134', fillOpacity: 1, color: '#4a8167', weight: 0.8 },
     province: { fill: false, color: '#2a5141', weight: 0.5 },
   };
   const CHINA = '156';
@@ -315,7 +317,12 @@
     style: PALETTE.land,
   }).addTo(map);
 
+  const regionLayers = [];
+  const regionStyle = () => (state.active ? PALETTE.visitedQuiet : PALETTE.visited);
+  const toneRegions = () => regionLayers.forEach((l) => l.setStyle(regionStyle()));
+
   function bindRegion(layer, name, trips) {
+    regionLayers.push(layer);
     const names = trips.slice(0, 4).map((t) => esc(t.title)).join('、');
     layer.bindTooltip(
       `<b>${esc(name)}</b><span>${trips.length > 4 ? `${names} 等 ${trips.length} 次旅行` : names}</span>`,
@@ -323,7 +330,7 @@
     );
     if (canHover.matches) {
       layer.on('mouseover', () => layer.setStyle(PALETTE.visitedHover));
-      layer.on('mouseout', () => layer.setStyle(PALETTE.visited));
+      layer.on('mouseout', () => layer.setStyle(regionStyle()));
     }
     layer.on('click', () => {
       if (state.active && trips.includes(state.active)) return;
@@ -552,7 +559,8 @@
 
   function fitPadding() {
     if (mobile.matches) {
-      return { paddingTopLeft: [28, 72], paddingBottomRight: [28, coveredHeight() + 28] };
+      // 地点标签画在标记右侧，右边多留些空间以免被屏幕边缘裁掉
+      return { paddingTopLeft: [24, 72], paddingBottomRight: [64, coveredHeight() + 28] };
     }
     const w = panel.offsetWidth + 20;
     return { paddingTopLeft: [w + 60, 70], paddingBottomRight: [90, 70] };
@@ -597,23 +605,36 @@
     ].map(([v, l]) => `<div class="stat"><b>${v}</b><span>${l}</span></div>`).join('');
   }
 
+  // 列表已按年份分组，卡片上的日期省去年份；只有月份的写成「2 月」
+  const shortDate = (date) => {
+    const month = date.match(/^\d{4}\.(\d{2})$/);
+    return month ? `${Number(month[1])} 月` : date.replace(/^\d{4}\./, '');
+  };
+
   function renderList() {
     const ul = $('#trip-list');
+    const perYear = {};
+    TRIPS.forEach((t) => {
+      const y = t.date.slice(0, 4);
+      perYear[y] = (perYear[y] || 0) + 1;
+    });
     let year = '';
     ul.innerHTML = TRIPS.map((t) => {
       const y = t.date.slice(0, 4);
-      const head = y !== year ? `<li class="year-head">${(year = y)}</li>` : '';
+      const head = y !== year ? `<li class="year-head"><b>${(year = y)}</b><i></i><span>${perYear[y]} 次旅行</span></li>` : '';
       return `${head}
       <li class="trip-card" data-id="${t.id}">
         <div class="mini">${miniRoute(t)}</div>
         <div class="info">
-          <div class="region">${esc(t.region)}</div>
+          <div class="top">
+            <span class="region">${esc(t.region)}</span>
+            <span class="date">${esc(shortDate(t.date))}</span>
+          </div>
           <h3>${esc(t.title)}</h3>
           <div class="sub">${esc(t.subtitle)}</div>
           <div class="meta">
             <span class="chip">${t.days.length} 天</span>
             ${t.km >= 1 ? `<span class="chip">约 ${fmtKm(t.km)} km</span>` : ''}
-            <span class="chip">${esc(t.date)}</span>
           </div>
         </div>
       </li>`;
@@ -654,7 +675,10 @@
         <div class="region">${esc(trip.region)}</div>
         <h2>${esc(trip.title)}</h2>
         <p class="sub">${esc(trip.subtitle)}</p>
-        <div class="date">${esc(trip.date)}</div>
+        <div class="date">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>
+          ${esc(trip.date)}
+        </div>
       </div>
       <div class="stats">
         <div class="stat"><b>${trip.days.length}<small>天</small></b><span>行程</span></div>
@@ -728,6 +752,7 @@
     const token = ++state.token;
     state.active = trip;
     clearActive();
+    toneRegions();
 
     previews.forEach((pl, tid) => pl.setStyle({ opacity: tid === id ? 0 : 0.25, weight: 2 }));
     pins.forEach((pin, tid) => {
@@ -769,6 +794,7 @@
     state.token++;
     state.active = null;
     clearActive();
+    toneRegions();
     previews.forEach((pl) => pl.setStyle({ opacity: 0.85, weight: 2 }));
     pins.forEach((pin) => {
       const el = pin.getElement();

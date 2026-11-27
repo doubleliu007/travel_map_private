@@ -31,17 +31,26 @@
   </aside>
 
   <div class="map-controls">
-    <button type="button" id="zoom-in" title="放大">+</button>
-    <button type="button" id="zoom-out" title="缩小">−</button>
-    <button type="button" id="zoom-all" title="查看全部旅行">
-      <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.8 3 2.8 15 0 18M12 3c-2.8 3-2.8 15 0 18"/></svg>
-    </button>
-    <button type="button" id="legend-toggle" title="图例">
-      <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="5" cy="7" r="1.6"/><circle cx="5" cy="17" r="1.6"/><path d="M10 7h10M10 17h10"/></svg>
-    </button>
+    <div class="ctl-group">
+      <button type="button" id="zoom-in" title="放大">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+      <button type="button" id="zoom-out" title="缩小">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 12h14"/></svg>
+      </button>
+    </div>
+    <div class="ctl-group">
+      <button type="button" id="zoom-all" title="查看全部旅行">
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.8 3 2.8 15 0 18M12 3c-2.8 3-2.8 15 0 18"/></svg>
+      </button>
+      <button type="button" id="legend-toggle" title="图例">
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="5" cy="7" r="1.6"/><circle cx="5" cy="17" r="1.6"/><path d="M10 7h10M10 17h10"/></svg>
+      </button>
+    </div>
   </div>
 
   <div class="legend">
+    <div class="legend-title">图例</div>
     <div class="legend-row"><i class="lg lg-city"></i>住宿城市</div>
     <div class="legend-row"><i class="lg lg-sight"></i>到访景点</div>
     <div class="legend-row"><i class="lg lg-pass"></i>途经</div>
